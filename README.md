@@ -8,3 +8,7 @@
 russian-boat-fuck-you/russian-boat-fuck-you is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
 You can click the Preview link to take a look at your changes.
 --->
+
+### (c) The initial idea is coming from https://github.com/grafov/hulk
+
+    http_proxy=10.2.3.4:5678 https_proxy=10.2.3.5:5679 socks5_proxy=10.2.3.6:5680 go run huilo.go
