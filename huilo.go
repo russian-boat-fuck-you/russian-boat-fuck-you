@@ -74,11 +74,13 @@ func main() {
 		threads int
 		siteUrl string
 		sites   []string
+		refresh time.Duration
 	)
 
 	flag.IntVarP(&threads, "max-routines", "t", 500, "Maximum number of simultaneous connections")
 	flag.StringArrayVarP(&sites, "site", "s", []string{}, "Sites list. Can be used multiple times. Have precedence over sites-url if set `site-url`")
-	flag.StringVarP(&siteUrl, "sites-url", "u", "https://hutin-puy.nadom.app/sites.json", "URL to fetch sites list from `sites-url` ")
+	flag.StringVarP(&siteUrl, "sites-url", "u", "https://hutin-puy.nadom.app/sites.json", "URL to fetch sites list from `sites-url`")
+	flag.DurationVarP(&refresh, "refresh", "r", 3*time.Second, "Screen refresh interval in seconds")
 	flag.Parse()
 
 	initVariables()
@@ -104,7 +106,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	startStatsPrinter(&statData, strikeList)
+	startStatsPrinter(&statData, strikeList, refresh)
 
 	for {
 		time.Sleep(100 * time.Millisecond)
@@ -240,8 +242,8 @@ func (ii *ipInfo) String() string {
 	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
 }
 
-func startStatsPrinter(stat *statistics, strikes []strikeItem) {
-	ticker := time.NewTicker(4 * time.Second)
+func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Duration) {
+	ticker := time.NewTicker(refresh)
 
 	go func() {
 		for {

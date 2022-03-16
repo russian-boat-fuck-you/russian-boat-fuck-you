@@ -18,6 +18,7 @@ You can click the Preview link to take a look at your changes.
     ./huilo --help
     Usage of huilo:
         -t, --max-routines int      Maximum number of simultaneous connections (default 500)
+        -r, --refresh duration      Screen refresh interval in seconds (default 3s)
         -s, --site site-url         Sites list. Can be used multiple times. Have precedence over sites-url if set site-url
         -u, --sites-url sites-url   URL to fetch sites list from sites-url  (default "https://hutin-puy.nadom.app/sites.json")
               
