@@ -49,26 +49,9 @@ type statItem struct {
 	startTime time.Time
 }
 
-type arrayFlags []string
-
-func (i *arrayFlags) String() string {
-	return "[" + strings.Join(*i, ",") + "]"
-}
-
-func (i *arrayFlags) Set(value string) error {
-	*i = append(*i, value)
-	return nil
-}
-
 const (
-	strikeUrl             = "https://hutin-puy.nadom.app/sites.json"
 	strikeRefreshInterval = 60 * time.Second
 	acceptCharset         = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
-	maxProcs              = 500
-
-	// strikeRefreshing uint8 = iota
-	// strikeListReady
-	// strikeListProcessing
 )
 
 var (
@@ -90,12 +73,12 @@ func main() {
 	var (
 		threads int
 		siteUrl string
-		sites   arrayFlags
+		sites   []string
 	)
 
-	flag.IntVar(&threads, "max-routines", maxProcs, "Maximum number of simultaneous connections")
-	flag.Var(&sites, "site", "Sites list. Can be used multiple times. Have precedence over sites-url if set `site-url`")
-	flag.StringVar(&siteUrl, "sites-url", strikeUrl, "URL to fetch sites list from `sites-url` ")
+	flag.IntVarP(&threads, "max-routines", "t", 500, "Maximum number of simultaneous connections")
+	flag.StringArrayVarP(&sites, "site", "s", []string{}, "Sites list. Can be used multiple times. Have precedence over sites-url if set `site-url`")
+	flag.StringVarP(&siteUrl, "sites-url", "u", "https://hutin-puy.nadom.app/sites.json", "URL to fetch sites list from `sites-url` ")
 	flag.Parse()
 
 	initVariables()
