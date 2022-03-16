@@ -93,9 +93,9 @@ func main() {
 		sites   arrayFlags
 	)
 
-	flag.IntVar(&threads, "max-routines", maxProcs, "Maximum number of simultaneous connections.")
-	flag.Var(&sites, "site", "Sites list. Can be used multiple times. Have precedence over `sites-url` if set")
-	flag.StringVar(&siteUrl, "sites-url", strikeUrl, "URL to fetch sites list from.")
+	flag.IntVar(&threads, "max-routines", maxProcs, "Maximum number of simultaneous connections")
+	flag.Var(&sites, "site", "Sites list. Can be used multiple times. Have precedence over sites-url if set `site-url`")
+	flag.StringVar(&siteUrl, "sites-url", strikeUrl, "URL to fetch sites list from `sites-url` ")
 	flag.Parse()
 
 	initVariables()
