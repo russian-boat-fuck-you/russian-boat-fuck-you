@@ -240,6 +240,22 @@ func startStrikeListRefresher(siteUrl *string) {
 	}()
 }
 
+type ipInfo struct {
+	Ip       string
+	City     string
+	Region   string
+	Country  string
+	Loc      string
+	Org      string
+	Postal   string
+	Timezone string
+	Readme   string
+}
+
+func (ii *ipInfo) String() string {
+	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
+}
+
 func startStatsPrinter(stat *statistics, strikes []strikeItem) {
 	ticker := time.NewTicker(4 * time.Second)
 
@@ -250,6 +266,7 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem) {
 				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
+				fmt.Fprintf(stats, "Current IP: %s\n", currentIpInfo())
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
 				for i, strike := range strikes {
 					site, ok := (*stat)[strike.Url]
@@ -277,6 +294,32 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem) {
 			}
 		}
 	}()
+}
+
+func currentIpInfo() string {
+	var ipEcho ipInfo
+
+	req, err := http.NewRequest(http.MethodGet, "https://ipecho.net/json", nil)
+	if err != nil {
+		return err.Error()
+	}
+
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		return err.Error()
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err.Error()
+	}
+
+	if err := json.Unmarshal(body, &ipEcho); err != nil {
+		return err.Error()
+	}
+
+	return ipEcho.String()
 }
 
 func greetingsTorussiaWarShip(huilo strikeItem) error {
