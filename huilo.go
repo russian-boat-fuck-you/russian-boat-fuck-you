@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	tm "github.com/buger/goterm"
+	flag "github.com/spf13/pflag"
 	ua "github.com/wux1an/fake-useragent"
 )
 
@@ -242,6 +242,7 @@ func startStrikeListRefresher(siteUrl *string) {
 
 type ipInfo struct {
 	Ip       string
+	Hostname string
 	City     string
 	Region   string
 	Country  string
@@ -299,7 +300,7 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem) {
 func currentIpInfo() string {
 	var ipEcho ipInfo
 
-	req, err := http.NewRequest(http.MethodGet, "https://ipecho.net/json", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://ipinfo.io/json", nil)
 	if err != nil {
 		return err.Error()
 	}
