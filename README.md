@@ -13,6 +13,10 @@ You can click the Preview link to take a look at your changes.
 
 #### Build an executable binary
     go build huilo.go
+
+For raspberry PI 4 32-bit OS
+
+    GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build  -trimpath -ldflags "-s -w -extldflags '-static'" -installsuffix cgo -tags netgo huilo.go
     
 #### Usage
     ./huilo --help
