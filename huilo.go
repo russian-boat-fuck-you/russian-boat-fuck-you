@@ -101,27 +101,52 @@ func main() {
 
 	if len(sites) > 0 {
 		for _, site := range sites {
-			sUrl, err := url.Parse(site)
+			var sUrl *url.URL
+			var err error
+			var scheme = "http"
+			sUrl, err = url.Parse(site)
 			if err != nil {
-				fmt.Printf("error parsing %s\n", site)
-				continue
+				hostPort := strings.Split(site, ":")
+				if len(hostPort) == 2 {
+					switch hostPort[1] {
+					case "80", "8080":
+						scheme = "http"
+					case "443", "8443":
+						scheme = "https"
+					case "53":
+						scheme = "udp"
+					case "21":
+						scheme = "ftp"
+					case "22", "25", "143", "465", "587", "993", "995":
+						scheme = "tcp4"
+					default:
+						scheme = "http"
+					}
+				}
+				sUrl, err = url.Parse(fmt.Sprintf("%s://%s", scheme, site))
+				if err != nil {
+					fmt.Printf("error parsing %s\n", site)
+					continue
+				}
 			}
 			if sUrl.Scheme == "" {
 				switch sUrl.Port() {
 				case "80", "8080":
-					sUrl.Scheme = "http"
+					scheme = "http"
 				case "443", "8443":
-					sUrl.Scheme = "https"
+					scheme = "https"
 				case "53":
-					sUrl.Scheme = "udp"
+					scheme = "udp"
 				case "21":
-					sUrl.Scheme = "ftp"
+					scheme = "ftp"
 				case "22", "25", "143", "465", "587", "993", "995":
-					sUrl.Scheme = "tcp"
+					scheme = "tcp4"
 				default:
-					sUrl.Scheme = "http"
+					scheme = "http"
 				}
+				sUrl, _ = url.Parse(fmt.Sprintf("%s://%s", scheme, site))
 			}
+
 			si := strikeItem{Url: sUrl.Scheme + "://" + sUrl.Host, Page: sUrl.String(), Atack: true, Protocol: sUrl.Scheme, Port: sUrl.Port()}
 			strikeList = append(strikeList, si)
 		}
