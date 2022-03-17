@@ -144,7 +144,11 @@ func main() {
 				default:
 					scheme = "http"
 				}
-				sUrl, _ = url.Parse(fmt.Sprintf("%s://%s", scheme, site))
+				sUrl, err = url.Parse(fmt.Sprintf("%s://%s", scheme, site))
+				if err != nil {
+					fmt.Printf("error parsing %s\n", site)
+					continue
+				}
 			}
 
 			si := strikeItem{Url: sUrl.Scheme + "://" + sUrl.Host, Page: sUrl.String(), Atack: true, Protocol: sUrl.Scheme, Port: sUrl.Port()}
@@ -342,7 +346,7 @@ type ipInfo struct {
 }
 
 func (ii *ipInfo) String() string {
-	if ii == nil || len(ii.Ip) == 0 {
+	if ii == nil || ii.Ip == "" {
 		return "Unknown"
 	}
 
@@ -443,7 +447,7 @@ func refreshIpInfo() {
 		return // err.Error()
 	}
 
-	if err := json.Unmarshal(body, &ipEcho); err != nil {
+	if err := json.Unmarshal(body, ipEcho); err != nil {
 		return // err.Error()
 	}
 
@@ -521,8 +525,8 @@ func proxyClient(pr *proxyItem) (*http.Client, error) {
 
 	cl, ok := proxyClients.Load(proxy.Ip)
 	if ok {
-		hcl := cl.(http.Client)
-		return &hcl, nil
+		hcl := cl.(*http.Client)
+		return hcl, nil
 	}
 
 	pu, err := url.Parse(proxy.Ip)
@@ -542,11 +546,13 @@ func proxyClient(pr *proxyItem) (*http.Client, error) {
 		}
 	}
 	if pu.Scheme == "" {
+		var scheme string
 		if proxy.Scheme != "" {
-			pu.Scheme = proxy.Scheme
+			scheme = proxy.Scheme
 		} else {
-			pu.Scheme = "http"
+			scheme = "http"
 		}
+		pu, _ = url.Parse(scheme + "://" + proxy.Ip)
 	}
 	if proxy.Auth != "" {
 		auth := strings.Split(proxy.Auth, ":")
@@ -561,7 +567,7 @@ func proxyClient(pr *proxyItem) (*http.Client, error) {
 	}).DialContext
 	tr.Proxy = http.ProxyURL(pu)
 	hcl := &http.Client{Transport: tr}
-	proxyClients.Store(proxy.Ip, *hcl)
+	proxyClients.Store(proxy.Ip, hcl)
 
 	return hcl, nil
 }
