@@ -21,9 +21,10 @@ For raspberry PI 4 32-bit OS
 #### Usage
     ./huilo --help
     Usage of huilo:
-        -t, --max-routines int      Maximum number of simultaneous connections (default 500)
-        -r, --refresh duration      Screen refresh interval in seconds (default 3s)
-        -s, --site site-url         Sites list. Can be used multiple times. Have precedence over sites-url if set site-url
-        -u, --sites-url sites-url   URL to fetch sites list from sites-url  (default "https://hutin-puy.nadom.app/sites.json")
+        -t, --max-routines int          Maximum number of simultaneous connections (default 500)
+        -p, --proxies-url proxies-url   URL to fetch proxy list from proxies-url (default "https://hutin-puy.nadom.app/proxy.json")
+        -r, --refresh duration          Screen refresh interval in seconds (default 3s)
+        -s, --site site-url             Sites list. Can be used multiple times. Have precedence over sites-url if set site-url
+        -u, --sites-url sites-url       URL to fetch sites list from sites-url  (default "https://hutin-puy.nadom.app/sites.json")
               
     http_proxy=10.2.3.4:5678 https_proxy=10.2.3.5:5679 socks5_proxy=10.2.3.6:5680 ./huilo --max-routines 1000 --site http://178.248.237.238 --site http://185.170.2.62 -s https://185.170.2.62 -s http://195.208.109.88 --site https://195.208.109.88

