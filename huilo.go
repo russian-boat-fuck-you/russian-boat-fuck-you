@@ -67,7 +67,7 @@ var (
 	statData           statistics
 	limiter, refresher chan struct{}
 	noProxyClient      *http.Client
-	ipEcho             *ipInfo
+	ipEcho             ipInfo
 	proxyList          []proxyItem
 	proxyClients       sync.Map
 	currProxyListId    int32
@@ -447,7 +447,7 @@ func refreshIpInfo() {
 		return // err.Error()
 	}
 
-	if err := json.Unmarshal(body, ipEcho); err != nil {
+	if err := json.Unmarshal(body, &ipEcho); err != nil {
 		return // err.Error()
 	}
 
