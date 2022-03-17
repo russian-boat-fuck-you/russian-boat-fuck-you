@@ -418,7 +418,6 @@ func refreshIpInfo() {
 		return // err.Error()
 	}
 
-	fmt.Printf("ip: %v\n", string(body))
 	if err := json.Unmarshal(body, &ipEcho); err != nil {
 		return // err.Error()
 	}
@@ -445,8 +444,6 @@ func russiaWarShipFuckYou(huilo *strikeItem, pr *proxyItem) error {
 	req.Header.Set("cf-visitor", "https")
 	req.Header.Set("Accept-Language", "ru")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-
-	// fmt.Printf("attacking %s\n", huilo.Url)
 
 	cl, err := proxyClient(pr)
 	if err != nil {
