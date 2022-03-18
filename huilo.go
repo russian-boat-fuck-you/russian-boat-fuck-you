@@ -379,9 +379,13 @@ func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Du
 			case <-ticker.C:
 				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
+				ip := "-"
+				if len(proxyList) > 0 {
+					ip = proxyList[atomic.LoadInt32(&currProxyListId)].Ip
+				}
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
 				fmt.Fprintf(stats, "Current IP: %s\n", ii.String())
-				fmt.Fprintf(stats, "Current Proxy: %s\n", proxyList[atomic.LoadInt32(&currProxyListId)].Ip)
+				fmt.Fprintf(stats, "Current Proxy: %s\n", ip)
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
 				for i, strike := range *strikes {
 					site, ok := (*stat)[strike.Url]
