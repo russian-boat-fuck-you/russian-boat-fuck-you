@@ -52,16 +52,17 @@ type statItem struct {
 type statistics map[string]*statItem
 
 type proxyItem struct {
-	Id     int32
-	Ip     string
-	Auth   string
-	Scheme string
+	Id     int32  `json:"id"`
+	Ip     string `json:"ip"`
+	Auth   string `json:"auth"`
+	Scheme string `json:"scheme"`
 	errCnt int32
 }
 
 const (
 	strikeRefreshInterval = 60 * time.Second
 	proxyRefreshInterval  = 30 * time.Minute
+	ipRefreshInterval     = 5 * time.Second
 	acceptCharset         = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 )
 
@@ -183,7 +184,7 @@ func main() {
 				time.Sleep(time.Second)
 				return
 			}
-			if atomic.LoadInt32(&proxyList[pId].errCnt) > 10 {
+			if atomic.LoadInt32(&proxyList[pId].errCnt) > 100 {
 				atomicNextProxy(pId)
 				goto P
 			}
@@ -349,7 +350,7 @@ func fetchProxyList(proxyUrl *string) error {
 }
 
 type ipInfo struct {
-	Ip       string
+	Ip       string `json:"ip"`
 	Hostname string
 	City     string
 	Region   string
@@ -359,14 +360,19 @@ type ipInfo struct {
 	Postal   string
 	Timezone string
 	Readme   string
+	Origin   string `json:"origin"`
 }
 
 func (ii *ipInfo) String() string {
-	if ii == nil || ii.Ip == "" {
+	if ii == nil {
 		return "Unknown"
 	}
-
-	return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
+	if ii.Ip != "" {
+		return fmt.Sprintf("%s (%s,%s,%s,%s); %s; %s; %s", ii.Ip, ii.City, ii.Region, ii.Postal, ii.Country, ii.Loc, ii.Org, ii.Timezone)
+	} else if ii.Origin != "" {
+		return ii.Origin
+	}
+	return "Unknown"
 }
 
 func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Duration, ii *ipInfo) {
@@ -417,24 +423,36 @@ func startStatsPrinter(stat *statistics, strikes *[]strikeItem, refresh *time.Du
 }
 
 func startIpInfoRefresher(ii *ipInfo) {
-	ii.refreshIpInfo()
-
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
 
 	go func() {
+		ipUrl := []string{
+			"https://ipinfo.io/json",
+			"http://httpbin.org/ip",
+		}
+		var ipUrlIndex int
+
 		for {
 			select {
 			case <-ticker.C:
-				if err := ii.refreshIpInfo(); err != nil {
+				ticker.Stop()
+				if err := ii.refreshIpInfo(&ipUrl[ipUrlIndex]); err != nil {
 					fmt.Printf("ip refresh info failed: %v\n", err.Error())
+					ipUrlIndex++
+					if ipUrlIndex < len(ipUrl) {
+						ticker.Reset(time.Second)
+						continue
+					}
 				}
+				ticker.Reset(ipRefreshInterval)
+				ipUrlIndex = 0
 			}
 		}
 	}()
 }
 
-func (ii *ipInfo) refreshIpInfo() error {
-	req, err := http.NewRequest(http.MethodGet, "https://ipinfo.io/json", nil)
+func (ii *ipInfo) refreshIpInfo(echoUrl *string) error {
+	req, err := http.NewRequest(http.MethodGet, *echoUrl, nil)
 	if err != nil {
 		// fmt.Printf("[1] req: %v\n", err.Error())
 		return err
@@ -446,7 +464,7 @@ func (ii *ipInfo) refreshIpInfo() error {
 	req.Header.Set("Accept-Charset", acceptCharset)
 	req.Header.Set("Referer", headersReferers[rand.Intn(len(headersReferers))]+buildblock(rand.Intn(5)+5))
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Host", "ipinfo.io")
+	req.Header.Set("Host", *echoUrl)
 	req.Header.Set("x-forwarded-proto", "https")
 	// req.Header.Set("cf-visitor", "https")
 	req.Header.Set("Accept-Language", "ru")
@@ -596,7 +614,7 @@ func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 	}
 	if proxy.Auth != "" {
 		auth := strings.Split(proxy.Auth, ":")
-		pu.User = url.UserPassword(auth[0], auth[1])
+		(*pu).User = url.UserPassword(auth[0], auth[1])
 	}
 
 	// tr := http.DefaultTransport.(*http.Transport).Clone()
