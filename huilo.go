@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -598,14 +599,20 @@ func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 		pu.User = url.UserPassword(auth[0], auth[1])
 	}
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.IdleConnTimeout = 15 * time.Second
-	tr.DialContext = (&net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
-	tr.Proxy = http.ProxyURL(pu)
-	hcl := &http.Client{Transport: tr}
+	// tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := http.Transport{
+		TLSClientConfig: &tls.Config{},
+		Proxy:           http.ProxyURL(pu),
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		// Disable HTTP/2.
+		TLSNextProto:    make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		IdleConnTimeout: 15 * time.Second,
+	}
+
+	hcl := &http.Client{Transport: &tr, Timeout: 15 * time.Second}
 	proxyClients.Store(proxy.Ip, hcl)
 
 	return hcl, &proxy, nil
