@@ -104,7 +104,6 @@ func main() {
 	flag.BoolVarP(&randProxy, "random-proxy", "x", false, "Use random proxy from list")
 	flag.Parse()
 
-	fmt.Println(randProxy)
 	initVariables()
 	limiter = make(chan struct{}, threads)
 
@@ -191,7 +190,6 @@ func main() {
 
 		P:
 			pId := atomic.LoadInt32(&currProxyListId)
-			fmt.Println(pId)
 			if atomic.LoadInt32(&proxyList[pId].errCnt) > 100 {
 				atomicNextProxy(pId)
 				goto P
