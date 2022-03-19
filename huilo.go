@@ -31,7 +31,7 @@ type strikeItem struct {
 	Protocol     string      `json:"protocol"`
 	Port         interface{} `json:"port"`
 	errCnt       int32
-	lastErrCheck int64
+	lastErrCheck int32
 }
 
 func (si *strikeItem) PagePayload() string {
@@ -208,8 +208,8 @@ func main() {
 					statData[strike.Url] = site
 				}
 
-				if nowT.Unix()-atomic.LoadInt64(&strike.lastErrCheck) > int64(2*time.Minute)/1000/1000/1000 {
-					atomic.StoreInt64(&strike.lastErrCheck, nowT.Unix())
+				if int32(nowT.Unix())-atomic.LoadInt32(&strike.lastErrCheck) > int32(2*time.Minute.Seconds()) {
+					atomic.StoreInt32(&strike.lastErrCheck, int32(nowT.Unix()))
 					atomic.StoreInt32(&strike.errCnt, 0)
 				}
 
