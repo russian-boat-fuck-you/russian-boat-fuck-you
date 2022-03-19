@@ -62,8 +62,8 @@ type proxyItem struct {
 }
 
 const (
-	strikeRefreshInterval = 60 * time.Second
-	proxyRefreshInterval  = 30 * time.Minute
+	strikeRefreshInterval = 5 * time.Minute
+	proxyRefreshInterval  = 24 * time.Hour
 	ipRefreshInterval     = 5 * time.Second
 	acceptCharset         = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 )
