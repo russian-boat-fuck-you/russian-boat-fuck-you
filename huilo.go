@@ -294,7 +294,6 @@ func fetchStrikeList(siteUrl *string) error {
 			if atack, ok := strike.Atack.(int); !ok || atack == 0 {
 				continue
 			}
-
 		} else if !atack {
 			continue
 		}
@@ -302,7 +301,9 @@ func fetchStrikeList(siteUrl *string) error {
 		strikeList[idx] = strike
 		idx++
 	}
-	strikeList = strikeList[:idx]
+	sl := strikeList[:idx]
+	strikeList = nil // treak to clear memory since leak occured
+	strikeList = sl[:]
 
 	return err
 }
