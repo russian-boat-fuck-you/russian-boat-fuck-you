@@ -24,6 +24,7 @@ For raspberry PI 4 32-bit OS
         -t, --max-routines int          Maximum number of simultaneous connections (default 500)
         -p, --proxies-url proxies-url   URL to fetch proxy list from proxies-url (default "https://hutin-puy.nadom.app/proxy.json")
         -x, --random-proxy              Use random proxy from list
+        -c, --recheck duration          Failed Atack refresh interval in seconds (default 1m0s)
         -r, --refresh duration          Screen refresh interval in seconds (default 3s)
         -s, --site site-url             Sites list. Can be used multiple times. Have precedence over sites-url if set site-url
         -u, --sites-url sites-url       URL to fetch sites list from sites-url  (default "https://hutin-puy.nadom.app/sites.json")

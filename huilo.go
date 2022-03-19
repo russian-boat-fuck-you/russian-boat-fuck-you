@@ -94,6 +94,7 @@ func main() {
 		siteUrl, proxyUrl string
 		sites             []string
 		refresh           time.Duration
+		recheckInterval   time.Duration
 	)
 
 	flag.IntVarP(&threads, "max-routines", "t", 500, "Maximum number of simultaneous connections")
@@ -102,6 +103,7 @@ func main() {
 	flag.DurationVarP(&refresh, "refresh", "r", 3*time.Second, "Screen refresh interval in seconds")
 	flag.StringVarP(&proxyUrl, "proxies-url", "p", "https://hutin-puy.nadom.app/proxy.json", "URL to fetch proxy list from `proxies-url`")
 	flag.BoolVarP(&randProxy, "random-proxy", "x", false, "Use random proxy from list")
+	flag.DurationVarP(&recheckInterval, "recheck", "c", 60*time.Second, "Failed Atack refresh interval in seconds")
 	flag.Parse()
 
 	initVariables()
@@ -210,7 +212,7 @@ func main() {
 					statData[strike.Url] = site
 				}
 
-				if int32(nowT.Unix())-atomic.LoadInt32(&strike.lastErrCheck) > int32(2*time.Minute.Seconds()) {
+				if int32(nowT.Unix())-atomic.LoadInt32(&strike.lastErrCheck) > int32(recheckInterval.Seconds()) {
 					atomic.StoreInt32(&strike.lastErrCheck, int32(nowT.Unix()))
 					atomic.StoreInt32(&strike.errCnt, 0)
 				}
