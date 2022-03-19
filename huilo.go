@@ -465,22 +465,19 @@ func startIpInfoRefresher(ii *ipInfo) {
 			"https://api.myip.com",
 			"https://api4.my-ip.io/ip.json",
 		}
-		var ipUrlIndex int
 
 		for {
 			select {
 			case <-ticker.C:
 				ticker.Stop()
-				if err := ii.refreshIpInfo(&ipUrl[ipUrlIndex]); err != nil {
-					fmt.Printf("ip refresh info failed: %v\n", err.Error())
-					ipUrlIndex++
-					if ipUrlIndex < len(ipUrl) {
-						ticker.Reset(time.Second)
+				for _, url := range ipUrl {
+					if err := ii.refreshIpInfo(&url); err != nil {
+						fmt.Printf("ip refresh info failed: %v\n", err.Error())
 						continue
 					}
+					break
 				}
 				ticker.Reset(ipRefreshInterval)
-				ipUrlIndex = 0
 			}
 		}
 	}()
