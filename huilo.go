@@ -175,7 +175,7 @@ func main() {
 	}
 
 	startProxyListRefresher(&proxyUrl)
-	startStatsPrinter(&statData, &strikeList, &refresh, &ipEcho)
+	startStatsPrinter(&statData, strikeList, &refresh, &ipEcho)
 
 	for {
 		time.Sleep(200 * time.Millisecond)
@@ -199,7 +199,11 @@ func main() {
 
 			nowT := time.Now()
 
-			for _, strike := range strikeList {
+			for i, strike := range strikeList {
+				if i == len(strikeList) {
+					break
+				}
+
 				limiter <- struct{}{}
 
 				var (
@@ -302,15 +306,7 @@ func fetchStrikeList(siteUrl *string) error {
 		idx++
 	}
 
-	sl := make([]*strikeItem, idx)
-	for i, si := range strikeList[:idx] {
-		sl[i] = si
-	}
-	strikeList = nil // treak to clear memory since leak occured
-	strikeList = make([]*strikeItem, idx)
-	for i, si := range sl {
-		strikeList[i] = si
-	}
+	strikeList = strikeList[:idx]
 
 	return err
 }
@@ -412,7 +408,7 @@ func (ii *ipInfo) String() string {
 	return "Unknown"
 }
 
-func startStatsPrinter(stat *statistics, strikes *[]*strikeItem, refresh *time.Duration, ii *ipInfo) {
+func startStatsPrinter(stat *statistics, strikes []*strikeItem, refresh *time.Duration, ii *ipInfo) {
 	go startIpInfoRefresher(ii)
 
 	ticker := time.NewTicker(*refresh)
@@ -433,7 +429,11 @@ func startStatsPrinter(stat *statistics, strikes *[]*strikeItem, refresh *time.D
 				fmt.Fprintf(stats, "Current IP: %s\n", ii.String())
 				fmt.Fprintf(stats, "Current Proxy [%d]: %s\n", pId, ip)
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
-				for i, strike := range *strikes {
+				for i, strike := range strikes {
+					if i == len(strikes) {
+						break
+					}
+
 					site, ok := (*stat)[strike.Url]
 					var (
 						succ, fail int32
