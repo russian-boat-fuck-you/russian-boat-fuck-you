@@ -301,9 +301,16 @@ func fetchStrikeList(siteUrl *string) error {
 		strikeList[idx] = strike
 		idx++
 	}
-	sl := strikeList[:idx]
+
+	sl := make([]*strikeItem, idx)
+	for i, si := range strikeList[:idx] {
+		sl[i] = si
+	}
 	strikeList = nil // treak to clear memory since leak occured
-	strikeList = sl[:]
+	strikeList = make([]*strikeItem, idx)
+	for i, si := range sl {
+		strikeList[i] = si
+	}
 
 	return err
 }
