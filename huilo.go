@@ -190,10 +190,10 @@ func main() {
 				return
 			}
 
-		P:
 			pId := atomic.LoadInt32(&currProxyListId)
-			if atomic.LoadInt32(&proxyList[pId].errCnt) > 100 {
-				atomicNextProxy(pId)
+		P:
+			if atomic.LoadInt32(&proxyList[pId].errCnt) > 30 {
+				pId = atomicNextProxy(pId)
 				goto P
 			}
 
@@ -236,21 +236,24 @@ func main() {
 				}(strike, proxyList[pId])
 			}
 
-			atomicNextProxy(pId)
+			_ = atomicNextProxy(pId)
 		}()
 	}
 }
 
-func atomicNextProxy(pid int32) {
+func atomicNextProxy(pid int32) (newInt int32) {
 	if randProxy {
-		atomic.StoreInt32(&currProxyListId, rand.Int31n(int32(len(proxyList))))
+		newInt = rand.Int31n(int32(len(proxyList)))
+		atomic.StoreInt32(&currProxyListId, newInt)
 	} else {
 		if pid+1 == int32(len(proxyList)) {
+			newInt = 0
 			atomic.StoreInt32(&currProxyListId, 0)
 		} else {
-			atomic.AddInt32(&currProxyListId, 1)
+			newInt = atomic.AddInt32(&currProxyListId, 1)
 		}
 	}
+	return
 }
 
 func fetchStrikeList(siteUrl *string) error {
