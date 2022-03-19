@@ -429,6 +429,10 @@ func startIpInfoRefresher(ii *ipInfo) {
 		ipUrl := []string{
 			"https://ipinfo.io/json",
 			"http://httpbin.org/ip",
+			"http://no-tls.jsonip.com",
+			"https://api.ipify.org?format=json",
+			"https://api.myip.com",
+			"https://api4.my-ip.io/ip.json",
 		}
 		var ipUrlIndex int
 
@@ -491,7 +495,7 @@ func (ii *ipInfo) refreshIpInfo(echoUrl *string) error {
 		return err // err.Error()
 	}
 
-	if err := json.Unmarshal(body, &ii); err != nil {
+	if err := json.Unmarshal(body, ii); err != nil {
 		// fmt.Printf("[4] unmarshal: %v\n", err.Error())
 		return err // err.Error()
 	}
@@ -604,17 +608,15 @@ func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 		}
 	}
 	if pu.Scheme == "" {
-		var scheme string
 		if proxy.Scheme != "" {
-			scheme = proxy.Scheme
+			pu.Scheme = proxy.Scheme
 		} else {
-			scheme = "http"
+			pu.Scheme = "http"
 		}
-		pu, _ = url.Parse(scheme + "://" + proxy.Ip)
 	}
 	if proxy.Auth != "" {
 		auth := strings.Split(proxy.Auth, ":")
-		(*pu).User = url.UserPassword(auth[0], auth[1])
+		pu.User = url.UserPassword(auth[0], auth[1])
 	}
 
 	// tr := http.DefaultTransport.(*http.Transport).Clone()
