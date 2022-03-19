@@ -77,6 +77,7 @@ var (
 	proxyList          []*proxyItem
 	proxyClients       sync.Map
 	currProxyListId    int32
+	randProxy          bool
 
 	headersReferers []string = []string{
 		"http://www.google.com/?q=",
@@ -100,8 +101,10 @@ func main() {
 	flag.StringVarP(&siteUrl, "sites-url", "u", "https://hutin-puy.nadom.app/sites.json", "URL to fetch sites list from `sites-url`")
 	flag.DurationVarP(&refresh, "refresh", "r", 3*time.Second, "Screen refresh interval in seconds")
 	flag.StringVarP(&proxyUrl, "proxies-url", "p", "https://hutin-puy.nadom.app/proxy.json", "URL to fetch proxy list from `proxies-url`")
+	flag.BoolVarP(&randProxy, "random-proxy", "x", false, "Use random proxy from list")
 	flag.Parse()
 
+	fmt.Println(randProxy)
 	initVariables()
 	limiter = make(chan struct{}, threads)
 
@@ -188,6 +191,7 @@ func main() {
 
 		P:
 			pId := atomic.LoadInt32(&currProxyListId)
+			fmt.Println(pId)
 			if atomic.LoadInt32(&proxyList[pId].errCnt) > 100 {
 				atomicNextProxy(pId)
 				goto P
@@ -238,10 +242,14 @@ func main() {
 }
 
 func atomicNextProxy(pid int32) {
-	if pid+1 == int32(len(proxyList)) {
-		atomic.StoreInt32(&currProxyListId, 0)
+	if randProxy {
+		atomic.StoreInt32(&currProxyListId, rand.Int31n(int32(len(proxyList))))
 	} else {
-		atomic.AddInt32(&currProxyListId, 1)
+		if pid+1 == int32(len(proxyList)) {
+			atomic.StoreInt32(&currProxyListId, 0)
+		} else {
+			atomic.AddInt32(&currProxyListId, 1)
+		}
 	}
 }
 
