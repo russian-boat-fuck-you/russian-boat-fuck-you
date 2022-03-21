@@ -672,7 +672,7 @@ func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 		tr.Dial = socks.Dial(pu.String() + "?timeout=5s")
 		// tr.Proxy = nil
 		tr.Proxy = http.ProxyURL(pu)
-		return nil, pr, fmt.Errorf("[%s] not supported", pu.Scheme)
+		// return nil, pr, fmt.Errorf("[%s] not supported", pu.Scheme)
 	}
 
 	hcl := &http.Client{Transport: &tr, Timeout: 10 * time.Second}
