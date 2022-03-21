@@ -19,6 +19,7 @@ import (
 	tm "github.com/buger/goterm"
 	flag "github.com/spf13/pflag"
 	ua "github.com/wux1an/fake-useragent"
+	"h12.io/socks"
 )
 
 type strikeItem struct {
@@ -420,14 +421,17 @@ func startStatsPrinter(stat *statistics, strikes []*strikeItem, refresh *time.Du
 				stats := tm.NewTable(0, 8, 4, ' ', 0)
 				ct := time.Now()
 				ip := "-"
+				var scheme string
 				var pId int32
 				if len(proxyList) > 0 {
 					pId = atomic.LoadInt32(&currProxyListId)
-					ip = proxyList[pId].Ip
+					pr := proxyList[pId]
+					ip = pr.Ip
+					scheme = pr.Scheme
 				}
 				fmt.Fprintf(stats, "Current Time: %s\n", ct.Format(time.RFC1123))
 				fmt.Fprintf(stats, "Current IP: %s\n", ii.String())
-				fmt.Fprintf(stats, "Current Proxy [%d]: %s\n", pId, ip)
+				fmt.Fprintf(stats, "Current Proxy [%d]: [%s]%s\n", pId, scheme, ip)
 				fmt.Fprintf(stats, "##\tURL\tSUCC\tFAIL\tDURATION\n")
 				for i, strike := range strikes {
 					if i == len(strikes) {
@@ -607,65 +611,72 @@ func initVariables() {
 }
 
 func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
-	var proxy *proxyItem
-
-	if pr != nil {
-		proxy = pr
-	} else {
+	if pr == nil {
 		if len(proxyList) == 0 {
 			return nil, nil, fmt.Errorf("proxyList is empty!")
 		}
-		proxy = proxyList[atomic.LoadInt32(&currProxyListId)]
+		pr = proxyList[atomic.LoadInt32(&currProxyListId)]
 	}
 
-	cl, ok := proxyClients.Load(proxy.Ip)
+	cl, ok := proxyClients.Load(pr.Ip)
 	if ok {
 		hcl := cl.(*http.Client)
-		return hcl, proxy, nil
+		return hcl, pr, nil
 	}
 
-	pu, err := url.Parse(proxy.Ip)
+	// TODO: implement DialContext as per scheme: http, socks4, socks5
+	pu, err := url.Parse(pr.Ip)
 	if err != nil {
-		if proxy.Scheme == "" {
-			pu, err = url.Parse("http://" + proxy.Ip)
+		if pr.Scheme == "" {
+			pu, err = url.Parse("http://" + pr.Ip)
 			if err != nil {
-				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
-				return nil, proxy, err
+				fmt.Printf("failed to parse proxy [%d]: %s\n", pr.Id, pr.Ip)
+				return nil, pr, err
 			}
 		} else {
-			pu, err = url.Parse(proxy.Scheme + "://" + proxy.Ip)
+			pu, err = url.Parse(pr.Scheme + "://" + pr.Ip)
 			if err != nil {
-				fmt.Printf("failed to parse proxy [%d]: %s\n", proxy.Id, proxy.Ip)
-				return nil, proxy, err
+				fmt.Printf("failed to parse proxy [%d]: %s\n", pr.Id, pr.Ip)
+				return nil, pr, err
 			}
 		}
 	}
 	if pu.Scheme == "" {
-		if proxy.Scheme != "" {
-			pu.Scheme = proxy.Scheme
+		if pr.Scheme != "" {
+			pu.Scheme = pr.Scheme
 		} else {
 			pu.Scheme = "http"
 		}
 	}
-	if proxy.Auth != "" {
-		auth := strings.Split(proxy.Auth, ":")
-		pu.User = url.UserPassword(auth[0], auth[1])
-	}
 
 	tr := http.Transport{
 		TLSClientConfig: &tls.Config{},
-		Proxy:           http.ProxyURL(pu),
-		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 15 * time.Second,
-		}).DialContext,
 		// Disable HTTP/2.
 		TLSNextProto:    make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
 		IdleConnTimeout: 15 * time.Second,
 	}
 
-	hcl := &http.Client{Transport: &tr, Timeout: 10 * time.Second}
-	proxyClients.Store(proxy.Ip, hcl)
+	auth := strings.Split(pr.Auth, ":")
+	if len(auth) > 1 {
+		pu.User = url.UserPassword(auth[0], auth[1])
+	}
 
-	return hcl, proxy, nil
+	switch pu.Scheme {
+	case "http", "https", "socks5":
+		tr.DialContext = (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}).DialContext
+		tr.Proxy = http.ProxyURL(pu)
+	case "socks4", "socks4a":
+		tr.Dial = socks.Dial(pu.String() + "?timeout=5s")
+		// tr.Proxy = nil
+		tr.Proxy = http.ProxyURL(pu)
+		return nil, pr, fmt.Errorf("[%s] not supported", pu.Scheme)
+	}
+
+	hcl := &http.Client{Transport: &tr, Timeout: 10 * time.Second}
+	proxyClients.Store(pr.Ip, hcl)
+
+	return hcl, pr, nil
 }
