@@ -667,7 +667,7 @@ func proxyClient(pr *proxyItem) (*http.Client, *proxyItem, error) {
 	}
 
 	tr := http.Transport{
-		TLSClientConfig: &tls.Config{},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		// Disable HTTP/2.
 		TLSNextProto:    make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
 		IdleConnTimeout: 15 * time.Second,
