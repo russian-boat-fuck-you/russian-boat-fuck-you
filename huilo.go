@@ -169,7 +169,7 @@ func main() {
 		}
 	} else {
 		startStrikeListRefresher(&siteUrl)
-		time.Sleep(4 * time.Second) // NOTE: give a chance to fetch sites list
+		time.Sleep(8 * time.Second) // NOTE: give a chance to fetch sites list
 	}
 
 	if len(strikeList) == 0 {
