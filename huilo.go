@@ -484,10 +484,11 @@ func startIpInfoRefresher(ii *ipInfo) {
 	go func() {
 		var ipUrl = []string{
 			"https://ipinfo.io/json",
+			"https://api.2ip.me/geo.json?ip=",
+			"https://api.myip.com",
 			"http://httpbin.org/ip",
 			"http://no-tls.jsonip.com",
 			"https://api.ipify.org?format=json",
-			"https://api.myip.com",
 			"https://api4.my-ip.io/ip.json",
 		}
 
